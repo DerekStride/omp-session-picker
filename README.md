@@ -16,7 +16,7 @@ Selecting a session restores OMP and prepares the prompt without submitting it, 
 ## Install
 
 ```sh
-omp plugin install github:DerekStride/omp-session-picker --scope user
+omp install github:DerekStride/omp-session-picker
 ```
 
 Restart any running OMP sessions after installation.
