@@ -22,14 +22,27 @@ function shellQuote(value: string): string {
 function fzfRow(session: PickerSession, index: number): FzfRow {
   const title = compactField(session.title)
   const slug = session.slug ? compactField(session.slug) : undefined
+  const herdrLabels: string[] = []
+  const herdrPreview: string[] = []
+  for (const location of session.herdrLocations ?? []) {
+    const workspace = compactField(location.workspace ?? "")
+    const tab = compactField(location.tab ?? "")
+    if (!workspace && !tab) continue
+    herdrLabels.push(workspace && tab ? `${workspace} / ${tab}` : workspace || tab)
+    if (workspace) herdrPreview.push(`Workspace: ${workspace}`)
+    if (tab) herdrPreview.push(`Tab:       ${tab}`)
+  }
+  const primaryLabel = herdrLabels[0] || slug
+  const extraLabels = herdrLabels.length > 0 ? [slug, ...herdrLabels.slice(1)].filter(Boolean).join(" · ") : ""
   const cwd = compactField(displayPath(session.cwd))
   const lastUserMessage = previewText(session.lastUserMessage?.trim() || "No user message found.")
-  const description = `${formatModified(session.modified)}  ${slug ? `${slug}  ` : ""}${title}  ${cwd}`
+  const description = `${formatModified(session.modified)}  ${primaryLabel ? `${primaryLabel}  ` : ""}${title}  ${cwd}${extraLabels ? `  ${extraLabels}` : ""}`
 
   return {
-    line: [session.id, description, String(index)].join(FIELD_SEPARATOR),
+    line: [slug || session.id, description, String(index)].join(FIELD_SEPARATOR),
     preview: [
       title,
+      ...herdrPreview,
       `Session:  ${session.id}`,
       ...(slug ? [`Agent:    ${slug}`] : []),
       `Project:  ${displayPath(session.cwd)}`,
@@ -43,7 +56,7 @@ function fzfRow(session: PickerSession, index: number): FzfRow {
   }
 }
 
-export async function pickSessionId(tui: TUI, sessions: PickerSession[]): Promise<string | undefined> {
+export async function pickSessionReference(tui: TUI, sessions: PickerSession[]): Promise<string | undefined> {
   const directory = await mkdtemp(join(tmpdir(), "omp-session-picker-"))
   const inputPath = join(directory, "sessions.tsv")
   const activePath = join(directory, "active.tsv")

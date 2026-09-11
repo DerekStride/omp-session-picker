@@ -25,12 +25,16 @@ Restart any running OMP sessions after installation.
 ## Use
 
 1. Run `/session-context` from an interactive OMP session, or press `Alt+S` while editing a prompt.
-2. Type to fuzzy-search session slugs (when available), titles, and project paths. The current session is excluded.
+2. Type to fuzzy-search Herdr workspace/tab names, session slugs (when available), titles, and project paths. The current session is excluded.
 3. Review the latest user message in the preview window.
 4. Press Enter to select, or Escape to cancel.
 5. Continue editing or submit the prompt.
 
-`Alt+S` inserts only the selected session ID at the current cursor position, preserving surrounding text. `/session-context` appends `Read the context from session <session-id>` to the draft. Neither submits the prompt; Escape leaves the draft unchanged.
+`Alt+S` inserts the selected session's human-readable slug at the current cursor position, falling back to its session ID when no slug is available. `/session-context` appends `Read the context from session <slug-or-id>` to the draft. Neither submits the prompt; Escape leaves the draft unchanged.
+
+For tools that require a session ID, `agent-id lookup <slug> --json` returns it in the `session_id` field.
+
+When available, the first Herdr `workspace / tab` location leads each result, followed by the title and project path. Agent slugs and additional locations remain searchable, and the preview shows all labels. Duplicate pane locations are collapsed.
 
 With `agent-id`, the picker opens in **Active** view. Press `Ctrl+A` to toggle between **Active** and **All** without clearing the search query, including when Active is empty.
 

@@ -10,6 +10,10 @@ const NO_TEXT_USER_MESSAGE = "User message contains no text."
 export interface PickerSession {
   id: string
   slug?: string
+  herdrLocations?: {
+    workspace?: string
+    tab?: string
+  }[]
   /** Undefined when agent-id discovery is unavailable. */
   active?: boolean
   cwd: string
@@ -17,6 +21,8 @@ export interface PickerSession {
   modified: Date
   lastUserMessage: string | undefined
 }
+
+type AgentMetadata = Pick<PickerSession, "slug" | "herdrLocations">
 
 type SessionMessageEntry = {
   type?: unknown
@@ -112,7 +118,7 @@ export function formatModified(value: Date): string {
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`
 }
 
-async function discoverAgentSlugs(includeAll: boolean): Promise<Map<string, string> | undefined> {
+async function discoverAgents(includeAll: boolean): Promise<Map<string, AgentMetadata> | undefined> {
   try {
     const process = Bun.spawn(["agent-id", "discover", "--limit", "0", "--json", ...(includeAll ? ["--all"] : [])], {
       stdin: "ignore",
@@ -124,13 +130,31 @@ async function discoverAgentSlugs(includeAll: boolean): Promise<Map<string, stri
 
     const assignments: unknown = JSON.parse(output)
     if (!Array.isArray(assignments)) return undefined
-    const slugs = new Map<string, string>()
+    const agents = new Map<string, AgentMetadata>()
     for (const assignment of assignments) {
-      if (typeof assignment?.session_id === "string" && typeof assignment?.slug === "string") {
-        slugs.set(assignment.session_id, assignment.slug)
+      if (typeof assignment?.session_id !== "string") continue
+      const herdrLocations: NonNullable<PickerSession["herdrLocations"]> = []
+      const locations = assignment.runtime?.provider === "herdr" && Array.isArray(assignment.runtime.locations)
+        ? assignment.runtime.locations
+        : []
+      for (const location of locations) {
+        const workspace = typeof location?.workspace_label === "string"
+          ? compactField(location.workspace_label) || undefined
+          : undefined
+        const tab = typeof location?.tab_label === "string"
+          ? compactField(location.tab_label) || undefined
+          : undefined
+        if (!workspace && !tab) continue
+        if (!herdrLocations.some((existing) => existing.workspace === workspace && existing.tab === tab)) {
+          herdrLocations.push({ workspace, tab })
+        }
       }
+      agents.set(assignment.session_id, {
+        slug: typeof assignment.slug === "string" ? assignment.slug : undefined,
+        herdrLocations: herdrLocations.length > 0 ? herdrLocations : undefined,
+      })
     }
-    return slugs
+    return agents
   } catch {
     // Identity metadata is optional; missing or unavailable agent-id must not prevent picking a session.
     return undefined
@@ -144,21 +168,26 @@ export async function listPickerSessions(
   sessions = sessions.filter((session) => session.id !== currentSessionId)
   const result: PickerSession[] = []
   if (sessions.length === 0) return result
-  const [slugs, activeSlugs] = await Promise.all([discoverAgentSlugs(true), discoverAgentSlugs(false)])
+  const [allAgents, activeAgents] = await Promise.all([discoverAgents(true), discoverAgents(false)])
 
   for (let offset = 0; offset < sessions.length; offset += SESSION_READ_CONCURRENCY) {
     const batch = sessions.slice(offset, offset + SESSION_READ_CONCURRENCY)
     result.push(
       ...(await Promise.all(
-        batch.map(async (session) => ({
-          id: session.id,
-          slug: slugs?.get(session.id) ?? activeSlugs?.get(session.id),
-          active: activeSlugs?.has(session.id),
-          cwd: session.cwd,
-          title: sessionTitle(session),
-          modified: session.modified,
-          lastUserMessage: await readLastUserMessage(session.path).catch(() => undefined),
-        })),
+        batch.map(async (session) => {
+          const allMetadata = allAgents?.get(session.id)
+          const activeMetadata = activeAgents?.get(session.id)
+          return {
+            id: session.id,
+            slug: allMetadata?.slug ?? activeMetadata?.slug,
+            herdrLocations: activeMetadata?.herdrLocations ?? allMetadata?.herdrLocations,
+            active: activeAgents?.has(session.id),
+            cwd: session.cwd,
+            title: sessionTitle(session),
+            modified: session.modified,
+            lastUserMessage: await readLastUserMessage(session.path).catch(() => undefined),
+          }
+        }),
       )),
     )
   }

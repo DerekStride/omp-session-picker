@@ -1,6 +1,6 @@
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi/pi-coding-agent"
 import type { Component } from "@oh-my-pi/pi-tui"
-import { pickSessionId } from "./src/fzf-picker"
+import { pickSessionReference } from "./src/fzf-picker"
 import { listPickerSessions } from "./src/session-data"
 
 const CONTEXT_PROMPT = "Read the context from session"
@@ -31,7 +31,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
     const selected = await ctx.ui.custom<string | undefined>(async (tui, _theme, _keybindings, done) => {
       let selectedSession: string | undefined
       try {
-        selectedSession = await pickSessionId(tui, sessions)
+        selectedSession = await pickSessionReference(tui, sessions)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         ctx.ui.notify(`Session picker failed: ${message}`, "error")
@@ -57,7 +57,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
     handler: (_args, ctx) => openPicker(ctx),
   })
   pi.registerShortcut("alt+s", {
-    description: "Insert an OMP session ID at the cursor",
+    description: "Insert an OMP session slug or ID at the cursor",
     handler: (ctx) => openPicker(ctx, true),
   })
 }
