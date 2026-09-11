@@ -9,6 +9,9 @@ const NO_TEXT_USER_MESSAGE = "User message contains no text."
 
 export interface PickerSession {
   id: string
+  slug?: string
+  /** Undefined when agent-id discovery is unavailable. */
+  active?: boolean
   cwd: string
   title: string
   modified: Date
@@ -109,12 +112,39 @@ export function formatModified(value: Date): string {
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}`
 }
 
+async function discoverAgentSlugs(includeAll: boolean): Promise<Map<string, string> | undefined> {
+  try {
+    const process = Bun.spawn(["agent-id", "discover", "--limit", "0", "--json", ...(includeAll ? ["--all"] : [])], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const [output, code] = await Promise.all([new Response(process.stdout).text(), process.exited])
+    if (code !== 0) return undefined
+
+    const assignments: unknown = JSON.parse(output)
+    if (!Array.isArray(assignments)) return undefined
+    const slugs = new Map<string, string>()
+    for (const assignment of assignments) {
+      if (typeof assignment?.session_id === "string" && typeof assignment?.slug === "string") {
+        slugs.set(assignment.session_id, assignment.slug)
+      }
+    }
+    return slugs
+  } catch {
+    // Identity metadata is optional; missing or unavailable agent-id must not prevent picking a session.
+    return undefined
+  }
+}
+
 export async function listPickerSessions(
   currentSessionId: string,
   sessions: SessionInfo[],
 ): Promise<PickerSession[]> {
   sessions = sessions.filter((session) => session.id !== currentSessionId)
   const result: PickerSession[] = []
+  if (sessions.length === 0) return result
+  const [slugs, activeSlugs] = await Promise.all([discoverAgentSlugs(true), discoverAgentSlugs(false)])
 
   for (let offset = 0; offset < sessions.length; offset += SESSION_READ_CONCURRENCY) {
     const batch = sessions.slice(offset, offset + SESSION_READ_CONCURRENCY)
@@ -122,6 +152,8 @@ export async function listPickerSessions(
       ...(await Promise.all(
         batch.map(async (session) => ({
           id: session.id,
+          slug: slugs?.get(session.id) ?? activeSlugs?.get(session.id),
+          active: activeSlugs?.has(session.id),
           cwd: session.cwd,
           title: sessionTitle(session),
           modified: session.modified,
