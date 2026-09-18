@@ -2,11 +2,9 @@
 
 An [fzf](https://github.com/junegunn/fzf)-backed session picker for [OMP](https://omp.sh). Browse persisted sessions, preview the latest user message, and prepare a prompt that asks the current agent to read the selected session's context.
 
-![FZF session picker showing session metadata and the latest user message](assets/session-picker.webp)
+<img width="1713" height="323" alt="Screenshot 2026-09-17 at 08 50 49" src="https://github.com/user-attachments/assets/bc2d08cd-afdf-44fe-91cd-0790107d132b" />
 
-Selecting a session restores OMP and prepares the prompt without submitting it, so it can be edited first.
-
-![OMP editor populated with the selected session ID](assets/session-context-prompt.webp)
+Selecting a session inserts the session_id or [agent-id](https://github.com/DerekStride/agent-id-cli) into the prompt editor.
 
 ## Requirements
 
