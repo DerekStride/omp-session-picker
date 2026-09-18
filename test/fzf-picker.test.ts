@@ -19,6 +19,15 @@ const selected = await pickSessionReference({ stop() {}, start() {} }, sessions)
 process.stdout.write(JSON.stringify(selected ?? null))
 `
 
+const listScript = `
+import { listPickerSessions } from ${JSON.stringify(sessionDataUrl)}
+const sessions = await listPickerSessions("current", [{
+  id: "target", cwd: "/project", title: "Session title", firstMessage: "First prompt",
+  path: "/missing/session.jsonl", modified: new Date("2025-01-01T00:00:00Z")
+}])
+process.stdout.write(JSON.stringify(sessions))
+`
+
 const discoveryScript = `#!/bin/sh
 case "$*" in
   *--all*) printf '%s\\n' "$PICKER_ALL_AGENTS" ;;
@@ -68,6 +77,57 @@ async function searchSession(
   if (code !== 0) throw new Error(stderr || `Search process exited with code ${code}`)
   return JSON.parse(stdout)
 }
+
+async function listSessions(activeAgents: unknown, allAgents = activeAgents): Promise<Record<string, unknown>[]> {
+  const directory = await mkdtemp(join(tmpdir(), "omp-picker-list-test-"))
+  temporaryDirectories.push(directory)
+  await writeFile(join(directory, "agent-id"), discoveryScript, { mode: 0o755 })
+  const process = Bun.spawn([globalThis.process.execPath, "-e", listScript], {
+    env: {
+      ...globalThis.process.env,
+      PATH: [directory, globalThis.process.env.PATH].join(delimiter),
+      PICKER_ACTIVE_AGENTS: JSON.stringify(activeAgents),
+      PICKER_ALL_AGENTS: JSON.stringify(allAgents),
+    },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ])
+  if (code !== 0) throw new Error(stderr || `List process exited with code ${code}`)
+  return JSON.parse(stdout)
+}
+
+test("includes active agents without persisted sessions", async () => {
+  const rows = await listSessions([{
+    session_id: "live",
+    name: "Live Agent of Lighthouse",
+    slug: "live-agent-lighthouse",
+    cwd: "/project",
+    state: { value: "working", updated_at: "2025-01-02T00:00:00Z" },
+    updated_at: "2025-01-02T00:00:00Z",
+    runtime: {
+      provider: "herdr",
+      state: "working",
+      locations: [{ workspace_label: "workspace", tab_label: "tab", cwd: "/project" }],
+    },
+  }])
+
+  expect(rows).toHaveLength(2)
+  const live = rows.find((row) => row.id === "live")
+  expect(live).toMatchObject({
+    name: "Live Agent of Lighthouse",
+    active: true,
+    persisted: false,
+    status: "working",
+    herdrLocations: [{ workspace: "workspace", tab: "tab" }],
+  })
+  expect(live?.lastUserMessage).toBeUndefined()
+})
 
 testWithFzf("searches secondary workspace/tab names and the slug", async () => {
   const locations = [

@@ -14,6 +14,22 @@ interface FzfRow {
   line: string
   preview: string
 }
+function statusMarker(status: string | undefined): string | undefined {
+  if (!status) return undefined
+  switch (status.toLowerCase()) {
+    case "idle":
+      return "\x1b[32m○\x1b[0m"
+    case "working":
+    case "waiting":
+      return "\x1b[33m●\x1b[0m"
+    case "blocked":
+      return "\x1b[31m●\x1b[0m"
+    case "done":
+      return "\x1b[34m●\x1b[0m"
+    default:
+      return "\x1b[90m●\x1b[0m"
+  }
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
@@ -22,6 +38,7 @@ function shellQuote(value: string): string {
 function fzfRow(session: PickerSession, index: number): FzfRow {
   const title = compactField(session.title)
   const slug = session.slug ? compactField(session.slug) : undefined
+  const identity = compactField(session.name?.trim() || session.id)
   const herdrLabels: string[] = []
   const herdrPreview: string[] = []
   for (const location of session.herdrLocations ?? []) {
@@ -32,21 +49,30 @@ function fzfRow(session: PickerSession, index: number): FzfRow {
     if (workspace) herdrPreview.push(`Workspace: ${workspace}`)
     if (tab) herdrPreview.push(`Tab:       ${tab}`)
   }
-  const primaryLabel = herdrLabels[0] || slug
-  const extraLabels = herdrLabels.length > 0 ? [slug, ...herdrLabels.slice(1)].filter(Boolean).join(" · ") : ""
-  const cwd = compactField(displayPath(session.cwd))
-  const lastUserMessage = previewText(session.lastUserMessage?.trim() || "No user message found.")
-  const description = `${formatModified(session.modified)}  ${primaryLabel ? `${primaryLabel}  ` : ""}${title}  ${cwd}${extraLabels ? `  ${extraLabels}` : ""}`
+  const status = statusMarker(session.status)
+  const persistence = session.persisted ? undefined : "\x1b[90m◇\x1b[0m"
+  const markers = [status, persistence].filter(Boolean).join(" ")
+  const locationText = herdrLabels.join(" · ")
+  const lastUserMessage = session.persisted
+    ? previewText(session.lastUserMessage?.trim() || "No user message found.")
+    : "Not persisted yet; no transcript is available."
+  const project = compactField(displayPath(session.cwd))
+  const description = [markers, locationText, identity].filter(Boolean).join("  ")
+  const searchText = [slug, title, project, session.id].filter(Boolean).join(" ")
+  const searchableDescription = searchText
+    ? `${description}\x1b[8m ${searchText}\x1b[0m`
+    : description
 
   return {
-    line: [slug || session.id, description, String(index)].join(FIELD_SEPARATOR),
+    line: [slug || session.id, searchableDescription, String(index)].join(FIELD_SEPARATOR),
     preview: [
       title,
       ...herdrPreview,
       `Session:  ${session.id}`,
       ...(slug ? [`Agent:    ${slug}`] : []),
-      `Project:  ${displayPath(session.cwd)}`,
-      `Modified: ${formatModified(session.modified)}`,
+      ...(session.persisted ? [] : ["Persistence: not persisted yet"]),
+      ...(project ? [`Project:  ${project}`] : []),
+      ...(session.persisted ? [`Modified: ${formatModified(session.modified)}`] : []),
       "",
       "Last user message",
       "─────────────────",
@@ -84,6 +110,7 @@ export async function pickSessionReference(tui: TUI, sessions: PickerSession[]):
       const process = Bun.spawn(
         [
           "fzf",
+          "--ansi",
           "--no-multi",
           "--height=80%",
           "--min-height=20",
@@ -97,7 +124,7 @@ export async function pickSessionReference(tui: TUI, sessions: PickerSession[]):
           "--delimiter",
           FIELD_SEPARATOR,
           "--with-nth=2",
-          "--nth=1,2",
+          "--nth=1",
           "--accept-nth=1",
           "--preview",
           `cat ${shellQuote(directory)}/{3}.txt`,

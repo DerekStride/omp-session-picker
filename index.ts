@@ -24,7 +24,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
     }
 
     if (sessions.length === 0) {
-      ctx.ui.notify("No other persisted OMP sessions found", "warning")
+      ctx.ui.notify("No other OMP sessions found", "warning")
       return
     }
 

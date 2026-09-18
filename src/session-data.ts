@@ -10,19 +10,30 @@ const NO_TEXT_USER_MESSAGE = "User message contains no text."
 export interface PickerSession {
   id: string
   slug?: string
+  name?: string
   herdrLocations?: {
     workspace?: string
     tab?: string
   }[]
   /** Undefined when agent-id discovery is unavailable. */
   active?: boolean
+  persisted: boolean
+  status?: string
   cwd: string
   title: string
   modified: Date
   lastUserMessage: string | undefined
 }
 
-type AgentMetadata = Pick<PickerSession, "slug" | "herdrLocations">
+type AgentMetadata = {
+  slug?: string
+  name?: string
+  summary?: string
+  herdrLocations?: PickerSession["herdrLocations"]
+  status?: string
+  cwd?: string
+  modified?: Date
+}
 
 type SessionMessageEntry = {
   type?: unknown
@@ -30,6 +41,12 @@ type SessionMessageEntry = {
     role?: unknown
     content?: unknown
   }
+}
+
+function dateValue(value: unknown): Date | undefined {
+  if (typeof value !== "string") return undefined
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date
 }
 
 function userMessageFromLine(line: Buffer): string | undefined {
@@ -132,26 +149,54 @@ async function discoverAgents(includeAll: boolean): Promise<Map<string, AgentMet
     if (!Array.isArray(assignments)) return undefined
     const agents = new Map<string, AgentMetadata>()
     for (const assignment of assignments) {
-      if (typeof assignment?.session_id !== "string") continue
-      const herdrLocations: NonNullable<PickerSession["herdrLocations"]> = []
-      const locations = assignment.runtime?.provider === "herdr" && Array.isArray(assignment.runtime.locations)
-        ? assignment.runtime.locations
+      if (assignment === null || typeof assignment !== "object") continue
+      const record = assignment as Record<string, unknown>
+      if (typeof record.session_id !== "string") continue
+
+      const runtime = record.runtime !== null && typeof record.runtime === "object"
+        ? record.runtime as Record<string, unknown>
+        : undefined
+      const state = record.state !== null && typeof record.state === "object"
+        ? record.state as Record<string, unknown>
+        : undefined
+      const locations = runtime?.provider === "herdr" && Array.isArray(runtime.locations)
+        ? runtime.locations
         : []
-      for (const location of locations) {
-        const workspace = typeof location?.workspace_label === "string"
+      const herdrLocations: NonNullable<PickerSession["herdrLocations"]> = []
+      let cwd = typeof record.cwd === "string" ? record.cwd : undefined
+
+      for (const rawLocation of locations) {
+        if (rawLocation === null || typeof rawLocation !== "object") continue
+        const location = rawLocation as Record<string, unknown>
+        const workspace = typeof location.workspace_label === "string"
           ? compactField(location.workspace_label) || undefined
           : undefined
-        const tab = typeof location?.tab_label === "string"
+        const tab = typeof location.tab_label === "string"
           ? compactField(location.tab_label) || undefined
           : undefined
+        if (!cwd && typeof location.cwd === "string") cwd = location.cwd
+        if (!cwd && typeof location.foreground_cwd === "string") cwd = location.foreground_cwd
         if (!workspace && !tab) continue
         if (!herdrLocations.some((existing) => existing.workspace === workspace && existing.tab === tab)) {
           herdrLocations.push({ workspace, tab })
         }
       }
-      agents.set(assignment.session_id, {
-        slug: typeof assignment.slug === "string" ? assignment.slug : undefined,
+
+      const summary = record.summary !== null && typeof record.summary === "object"
+        ? record.summary as Record<string, unknown>
+        : undefined
+      agents.set(record.session_id, {
+        slug: typeof record.slug === "string" ? record.slug : undefined,
+        name: typeof record.name === "string" ? record.name : undefined,
+        summary: typeof summary?.text === "string" ? summary.text : undefined,
         herdrLocations: herdrLocations.length > 0 ? herdrLocations : undefined,
+        status: typeof runtime?.state === "string"
+          ? runtime.state
+          : typeof state?.value === "string"
+            ? state.value
+            : undefined,
+        cwd,
+        modified: dateValue(record.updated_at) ?? dateValue(record.created_at),
       })
     }
     return agents
@@ -161,14 +206,29 @@ async function discoverAgents(includeAll: boolean): Promise<Map<string, AgentMet
   }
 }
 
+function unpersistedSession(id: string, metadata: AgentMetadata): PickerSession {
+  return {
+    id,
+    slug: metadata.slug,
+    name: metadata.name,
+    herdrLocations: metadata.herdrLocations,
+    active: true,
+    persisted: false,
+    status: metadata.status,
+    cwd: metadata.cwd ?? "",
+    title: metadata.summary ?? metadata.name ?? "Unpersisted session",
+    modified: metadata.modified ?? new Date(0),
+    lastUserMessage: undefined,
+  }
+}
+
 export async function listPickerSessions(
   currentSessionId: string,
   sessions: SessionInfo[],
 ): Promise<PickerSession[]> {
   sessions = sessions.filter((session) => session.id !== currentSessionId)
-  const result: PickerSession[] = []
-  if (sessions.length === 0) return result
   const [allAgents, activeAgents] = await Promise.all([discoverAgents(true), discoverAgents(false)])
+  const result: PickerSession[] = []
 
   for (let offset = 0; offset < sessions.length; offset += SESSION_READ_CONCURRENCY) {
     const batch = sessions.slice(offset, offset + SESSION_READ_CONCURRENCY)
@@ -179,9 +239,12 @@ export async function listPickerSessions(
           const activeMetadata = activeAgents?.get(session.id)
           return {
             id: session.id,
-            slug: allMetadata?.slug ?? activeMetadata?.slug,
+            slug: activeMetadata?.slug ?? allMetadata?.slug,
+            name: activeMetadata?.name ?? allMetadata?.name,
             herdrLocations: activeMetadata?.herdrLocations ?? allMetadata?.herdrLocations,
             active: activeAgents?.has(session.id),
+            persisted: true,
+            status: activeMetadata?.status ?? allMetadata?.status,
             cwd: session.cwd,
             title: sessionTitle(session),
             modified: session.modified,
@@ -192,5 +255,15 @@ export async function listPickerSessions(
     )
   }
 
+  if (activeAgents) {
+    const persistedIds = new Set(sessions.map((session) => session.id))
+    for (const [id, metadata] of activeAgents) {
+      if (id !== currentSessionId && !persistedIds.has(id)) {
+        result.push(unpersistedSession(id, metadata))
+      }
+    }
+  }
+
+  result.sort((left, right) => right.modified.getTime() - left.modified.getTime())
   return result
 }
