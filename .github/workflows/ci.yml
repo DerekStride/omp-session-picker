@@ -6,8 +6,8 @@ on:
   pull_request:
 
 env:
-  # --accept-nth requires fzf 0.60+, --with-shell 0.52+. Pin instead of relying on distro packages.
-  FZF_VERSION: "0.65.0"
+  # Match live E2E: older fzf versions ignore --accept-nth in the tests' --filter mode.
+  FZF_VERSION: "0.70.0"
 
 jobs:
   test:
@@ -31,8 +31,9 @@ jobs:
           echo "$RUNNER_TEMP/fzf" >> "$GITHUB_PATH"
           export PATH="$RUNNER_TEMP/fzf:$PATH"
           fzf --version
-          # Fail loudly if the installed fzf lacks the flags the picker depends on.
-          printf 'a\tb\n' | fzf --filter=a --delimiter '\t' --accept-nth=1 --with-shell 'sh -c' >/dev/null
+          # Check output semantics, not just flag acceptance: filter mode must project field 1.
+          selected="$(printf 'a\tb\n' | fzf --filter=a --delimiter '\t' --accept-nth=1 --with-shell 'sh -c')"
+          test "$selected" = a
 
       - name: Install dependencies (frozen lockfile)
         run: bun install --frozen-lockfile

@@ -48,7 +48,7 @@ bun run test:pi      # Node 24+: test/pi/*.test.ts
 bun run typecheck
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these with Bun 1.3.14 and Node 24, a frozen lockfile, and a pinned fzf release (0.60+ is required for `--accept-nth`). fzf-dependent tests skip locally when fzf is absent but fail in CI (`requireFzfInCI`), so live-fzf coverage cannot be silently lost.
+CI (`.github/workflows/ci.yml`) runs exactly these with Bun 1.3.14 and Node 24, a frozen lockfile, and fzf 0.70.0, matching live E2E. Older fzf versions such as 0.65 accept `--accept-nth` but ignore it in the suites' non-interactive `--filter` mode; CI checks the projected output, not just flag acceptance. fzf-dependent tests skip locally when fzf is absent but fail in CI (`requireFzfInCI`), so live-fzf coverage cannot be silently lost.
 
 Shared-behavior coverage must stay synchronized: when changing `src/`, add matching assertions to `test/picker.test.ts` and `test/pi/picker.test.ts` (and to the session-data suites where relevant). Duplicated assertions across suites are intentional; only the fixtures under `test/fixtures/` are shared. Tests isolate `PATH` to a fixture directory plus fzf so the machine's `agent-id` and live sessions never leak into a run; fzf-dependent tests skip when fzf is absent.
 
