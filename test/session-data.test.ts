@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, test } from "bun:test"
-import { compactField, previewText, readLastUserMessage } from "../src/session-data"
+import { compactField, listPickerSessions, previewText, readLastUserMessage } from "../src/session-data"
+import { fixtureEnv } from "./fixtures/picker-harness.ts"
 
 const temporaryDirectories: string[] = []
 
@@ -73,4 +74,25 @@ describe("readLastUserMessage", () => {
 test("sanitizes list and preview fields without flattening preview paragraphs", () => {
   expect(compactField("title\twith\ncontrols\u0000")).toBe("title with controls")
   expect(previewText("first\r\nsecond\tcolumn\u0000")).toBe("first\nsecond    column")
+})
+
+describe("agent-id discovery", () => {
+  const savedEnv = { ...process.env }
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key]
+    Object.assign(process.env, savedEnv)
+  })
+
+  test("agent-id failure or absence degrades to title/path search", async () => {
+    const fixture = await fixtureEnv(undefined, [])
+    temporaryDirectories.push(fixture.directory)
+    await writeFile(join(fixture.directory, "agent-id"), "#!/bin/sh\nexit 3\n", { mode: 0o755 })
+    Object.assign(process.env, fixture.env)
+    const rows = await listPickerSessions("current", [
+      { id: "target", cwd: "/project", firstMessage: "First", path: fixture.sessionPath, modified: new Date(0) },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.active).toBeUndefined()
+    expect(rows[0]!.lastUserMessage).toBe("Context")
+  })
 })

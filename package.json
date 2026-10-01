@@ -1,6 +1,6 @@
 {
   "name": "omp-session-picker",
-  "description": "FZF-backed session picker for OMP",
+  "description": "FZF-backed session picker for OMP and Pi",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -12,17 +12,33 @@
   "engines": {
     "bun": ">=1.3.14"
   },
+  "pi": {
+    "extensions": [
+      "./index.pi.ts"
+    ]
+  },
   "omp": {
     "extensions": [
       "./index.ts"
     ]
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun run test:omp && bun run test:pi",
+    "test:omp": "bun test test/fzf-picker.test.ts test/session-data.test.ts test/picker.test.ts",
+    "test:pi": "node --test 'test/pi/*.test.ts'",
     "typecheck": "bunx tsc --noEmit"
   },
   "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
     "@oh-my-pi/pi-coding-agent": ">=17.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "^17.3.0",

@@ -1,6 +1,20 @@
+import { execFile } from "node:child_process"
 import { open } from "node:fs/promises"
 import { homedir } from "node:os"
-import type { SessionInfo } from "@oh-my-pi/pi-coding-agent"
+
+/**
+ * Host-neutral subset of a session listing entry. OMP's SessionInfo carries an
+ * auto-generated `title`; Pi's carries the user-assigned `name`.
+ */
+export interface SessionInfoLike {
+  id: string
+  path: string
+  cwd: string
+  modified: Date
+  firstMessage: string
+  title?: string
+  name?: string
+}
 
 const READ_CHUNK_BYTES = 64 * 1024
 const SESSION_READ_CONCURRENCY = 16
@@ -106,8 +120,8 @@ export async function readLastUserMessage(
   }
 }
 
-function sessionTitle(session: SessionInfo): string {
-  const title = session.title?.trim()
+function sessionTitle(session: SessionInfoLike): string {
+  const title = session.name?.trim() || session.title?.trim()
   if (title) return title
 
   const firstMessage = session.firstMessage.trim()
@@ -137,13 +151,15 @@ export function formatModified(value: Date): string {
 
 async function discoverAgents(includeAll: boolean): Promise<Map<string, AgentMetadata> | undefined> {
   try {
-    const process = Bun.spawn(["agent-id", "discover", "--limit", "0", "--json", ...(includeAll ? ["--all"] : [])], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        "agent-id",
+        ["discover", "--limit", "0", "--json", ...(includeAll ? ["--all"] : [])],
+        // execFile captures stderr instead of inheriting it, so discovery noise never reaches the TUI.
+        { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        (error, stdout) => (error ? reject(error) : resolve(stdout)),
+      )
     })
-    const [output, code] = await Promise.all([new Response(process.stdout).text(), process.exited])
-    if (code !== 0) return undefined
 
     const assignments: unknown = JSON.parse(output)
     if (!Array.isArray(assignments)) return undefined
@@ -224,7 +240,7 @@ function unpersistedSession(id: string, metadata: AgentMetadata): PickerSession 
 
 export async function listPickerSessions(
   currentSessionId: string,
-  sessions: SessionInfo[],
+  sessions: SessionInfoLike[],
 ): Promise<PickerSession[]> {
   sessions = sessions.filter((session) => session.id !== currentSessionId)
   const [allAgents, activeAgents] = await Promise.all([discoverAgents(true), discoverAgents(false)])

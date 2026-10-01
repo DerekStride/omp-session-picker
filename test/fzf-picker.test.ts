@@ -2,8 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { delimiter, join } from "node:path"
 import { afterEach, expect, test } from "bun:test"
+import { requireFzfInCI } from "./fixtures/picker-harness.ts"
 
 const temporaryDirectories: string[] = []
+requireFzfInCI()
 const testWithFzf = test.skipIf(!Bun.which("fzf"))
 const sessionDataUrl = new URL("../src/session-data.ts", import.meta.url).href
 const pickerUrl = new URL("../src/fzf-picker.ts", import.meta.url).href

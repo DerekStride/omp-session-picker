@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { spawn } from "node:child_process"
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { TUI } from "@oh-my-pi/pi-tui"
-import { compactField, displayPath, formatModified, previewText, type PickerSession } from "./session-data"
+import { compactField, displayPath, formatModified, previewText, type PickerSession } from "./session-data.ts"
 
 const FIELD_SEPARATOR = "\t"
 const ACTIVE_PROMPT = "Active sessions › "
@@ -82,7 +82,42 @@ function fzfRow(session: PickerSession, index: number): FzfRow {
   }
 }
 
-export async function pickSessionReference(tui: TUI, sessions: PickerSession[]): Promise<string | undefined> {
+/** The subset of the host TUI needed to hand the terminal to fzf and take it back. */
+export interface TerminalOwner {
+  stop(): void
+  start(): void
+  /** Force a full repaint; Pi's regular-mode TUI otherwise diffs against the pre-fzf frame. */
+  requestRender?(force?: boolean): void
+}
+
+interface FzfExit {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+}
+
+/**
+ * Run fzf with stdin attached to `inputPath` and stdout captured. The terminal (stderr) is
+ * inherited so fzf renders directly. The stdin descriptor is closed whether spawn succeeds or fails.
+ */
+async function runFzf(args: string[], inputPath: string): Promise<FzfExit> {
+  const input = await open(inputPath, "r")
+  try {
+    return await new Promise<FzfExit>((resolve, reject) => {
+      const child = spawn("fzf", args, { stdio: [input.fd, "pipe", "inherit"] })
+      const chunks: Buffer[] = []
+      child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk))
+      child.on("error", reject)
+      child.on("close", (code, signal) => {
+        resolve({ code, signal, stdout: Buffer.concat(chunks).toString("utf8") })
+      })
+    })
+  } finally {
+    await input.close()
+  }
+}
+
+export async function pickSessionReference(tui: TerminalOwner, sessions: PickerSession[]): Promise<string | undefined> {
   const directory = await mkdtemp(join(tmpdir(), "omp-session-picker-"))
   const inputPath = join(directory, "sessions.tsv")
   const activePath = join(directory, "active.tsv")
@@ -103,13 +138,11 @@ export async function pickSessionReference(tui: TUI, sessions: PickerSession[]):
     const toggleView = `if [ "$FZF_PROMPT" = ${shellQuote(ACTIVE_PROMPT)} ]; then printf '%s\\n' ${shellQuote(showAll)}; else printf '%s\\n' ${shellQuote(showActive)}; fi`
 
     tui.stop()
-    let code: number
-    let stdout: string
+    let exit: FzfExit
 
     try {
-      const process = Bun.spawn(
+      exit = await runFzf(
         [
-          "fzf",
           "--ansi",
           "--no-multi",
           "--height=80%",
@@ -131,22 +164,18 @@ export async function pickSessionReference(tui: TUI, sessions: PickerSession[]):
           "--preview-label=Last user message",
           "--preview-window=right,60%,wrap,border-left,<100(down,50%,border-top)",
         ],
-        {
-          stdin: Bun.file(hasActivity ? activePath : inputPath),
-          stdout: "pipe",
-          stderr: "inherit",
-        },
+        hasActivity ? activePath : inputPath,
       )
-      const output = new Response(process.stdout).text()
-      code = await process.exited
-      stdout = await output
     } finally {
       tui.start()
+      tui.requestRender?.(true)
     }
 
-    if (code === 130 || code === 1) return undefined
-    if (code !== 0) throw new Error(`fzf exited with code ${code}`)
-    return stdout.trim() || undefined
+    if (exit.code === 130 || exit.code === 1) return undefined
+    if (exit.code !== 0) {
+      throw new Error(exit.code === null ? `fzf terminated by ${exit.signal}` : `fzf exited with code ${exit.code}`)
+    }
+    return exit.stdout.trim() || undefined
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
